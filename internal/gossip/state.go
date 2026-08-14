@@ -131,7 +131,16 @@ func (p *State) Refresh() {
 		p.lastRefreshHadRPCError = true
 		p.peerStatesByName = latestPeerStatesByName
 		p.PeerStatesRefreshedAt = time.Now().UTC()
-		p.logger.Error("failed to get cluster nodes", "error", err)
+		// An RPC failure means we cannot prove that an active peer still exists.
+		// Count it as a leaderless sample so the manager eventually reaches its
+		// fail-closed path: an isolated active node demotes itself, while an
+		// isolated passive node remains passive. A later successful sample that
+		// sees the active peer resets this counter as usual.
+		p.LeaderlessSamplesCount++
+		p.logger.Error("failed to get cluster nodes",
+			"error", err,
+			"leaderless_samples_count", p.LeaderlessSamplesCount,
+		)
 		return
 	}
 	p.lastRefreshHadRPCError = false

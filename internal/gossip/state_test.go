@@ -269,6 +269,13 @@ func TestRefresh_WithRPCError(t *testing.T) {
 	// Verify the state was cleared
 	assert.False(t, state.PeerStatesRefreshedAt.IsZero())
 	assert.Empty(t, state.GetPeerStates())
+	assert.Equal(t, 1, state.LeaderlessSamplesCount)
+
+	// Consecutive RPC failures must continue advancing the fail-closed
+	// threshold. Otherwise an isolated active validator can remain active
+	// indefinitely while a healthy peer takes over.
+	state.Refresh()
+	assert.Equal(t, 2, state.LeaderlessSamplesCount)
 }
 
 func TestLastRefreshHadRPCError(t *testing.T) {
