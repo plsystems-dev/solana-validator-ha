@@ -23,6 +23,7 @@ var publicIPServices = []string{
 type Validator struct {
 	Name                string              `koanf:"name"`
 	RPCURL              string              `koanf:"rpc_url"`
+	PublicIPOverride    string              `koanf:"public_ip"`
 	PublicIPServiceURLs []string            `koanf:"public_ip_service_urls"`
 	Identities          ValidatorIdentities `koanf:"identities"`
 }
@@ -37,12 +38,12 @@ type Validator struct {
 // a public key is supplied, the daemon operates in pubkey-only mode for that
 // identity. The keypair file takes precedence if both are set.
 type ValidatorIdentities struct {
-	ActiveKeyPairFile   string               `koanf:"active"`
-	ActiveKeyPair       *solanago.PrivateKey  `koanf:"-"`
-	ActivePubkeyStr     string               `koanf:"active_pubkey"`
-	PassiveKeyPairFile  string               `koanf:"passive"`
-	PassiveKeyPair      *solanago.PrivateKey  `koanf:"-"`
-	PassivePubkeyStr    string               `koanf:"passive_pubkey"`
+	ActiveKeyPairFile  string               `koanf:"active"`
+	ActiveKeyPair      *solanago.PrivateKey `koanf:"-"`
+	ActivePubkeyStr    string               `koanf:"active_pubkey"`
+	PassiveKeyPairFile string               `koanf:"passive"`
+	PassiveKeyPair     *solanago.PrivateKey `koanf:"-"`
+	PassivePubkeyStr   string               `koanf:"passive_pubkey"`
 }
 
 // ActivePubkey returns the active identity public key string.
@@ -113,6 +114,15 @@ func (v *Validator) Validate() error {
 		return fmt.Errorf("validator.name must be defined")
 	}
 
+	// A configured public IP makes peer identity deterministic and avoids an
+	// external IP-discovery dependency during daemon startup.
+	if v.PublicIPOverride != "" {
+		ip := net.ParseIP(v.PublicIPOverride)
+		if ip == nil || ip.To4() == nil {
+			return fmt.Errorf("validator.public_ip must be a valid IPv4 address")
+		}
+	}
+
 	// validator.rpc_url must be a valid URL
 	if v.RPCURL == "" {
 		return fmt.Errorf("validator.rpc_url must be a valid URL")
@@ -162,6 +172,10 @@ func (v *Validator) SetDefaults() {
 // PublicIP returns the public IP address of the validator using the public IP service URLs
 // returns the first successful response
 func (v *Validator) PublicIP() (string, error) {
+	if v.PublicIPOverride != "" {
+		return v.PublicIPOverride, nil
+	}
+
 	for _, publicIPServiceURL := range v.PublicIPServiceURLs {
 		response, err := http.Get(publicIPServiceURL)
 		if err != nil {

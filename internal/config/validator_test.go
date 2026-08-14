@@ -48,6 +48,24 @@ func TestValidator_Validate(t *testing.T) {
 	validator.RPCURL = "https://api.testnet.solana.com"
 	err = validator.Validate()
 	assert.NoError(t, err)
+
+	// Test public IP override validation
+	validator.PublicIPOverride = "183.81.169.97"
+	err = validator.Validate()
+	assert.NoError(t, err)
+
+	validator.PublicIPOverride = "not-an-ip"
+	err = validator.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "validator.public_ip must be a valid IPv4 address")
+}
+
+func TestValidator_PublicIPOverride(t *testing.T) {
+	validator := &Validator{PublicIPOverride: "183.81.169.97"}
+
+	publicIP, err := validator.PublicIP()
+	require.NoError(t, err)
+	assert.Equal(t, "183.81.169.97", publicIP)
 }
 
 func TestValidatorIdentities_Load(t *testing.T) {
