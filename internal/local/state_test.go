@@ -25,6 +25,9 @@ const (
 // -32601 Method Not Found, which the rpc.Client surfaces as an error.
 func newMockRPCServer(t *testing.T, responses map[string]interface{}) *httptest.Server {
 	t.Helper()
+	if _, ok := responses["getSlot"]; !ok {
+		responses["getSlot"] = uint64(1000)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Method string `json:"method"`
@@ -59,9 +62,12 @@ func identityResult(pubkey string) map[string]interface{} {
 // newTestState creates a State wired to the given rpc.Client with sensible test defaults.
 func newTestState(rpcClient *rpc.Client, minDuration time.Duration) *State {
 	return NewState(Options{
-		RPC:          rpcClient,
-		ActivePubkey: testActivePubkey,
+		RPC:           rpcClient,
+		ClusterRPC:    rpcClient,
+		ActivePubkey:  testActivePubkey,
+		PassivePubkey: testPassivePubkey,
 		Cfg: config.SelfHealthy{
+			MaxSlotDistance:      32,
 			MinimumDuration:      minDuration,
 			PollIntervalDuration: time.Second,
 		},
@@ -79,10 +85,11 @@ func TestNewState(t *testing.T) {
 	}
 
 	s := NewState(Options{
-		RPC:          rpcClient,
-		Cfg:          cfg,
-		ActivePubkey: testActivePubkey,
-		Ctx:          context.Background(),
+		RPC:           rpcClient,
+		Cfg:           cfg,
+		ActivePubkey:  testActivePubkey,
+		PassivePubkey: testPassivePubkey,
+		Ctx:           context.Background(),
 	})
 
 	require.NotNil(t, s)
@@ -302,8 +309,7 @@ func TestSampleSelf_UnhealthyToHealthy_ResetsUnhealthyLogged(t *testing.T) {
 func TestSampleSelf_ConcurrentAccess(t *testing.T) {
 	// Simulates the real-world usage: one writer goroutine (the health ticker calling SampleSelf)
 	// and multiple reader goroutines (the main HA loop calling IsSelfHealthyLongEnough /
-	// SelfHealthyDuration). rpc.Client is intentionally not goroutine-safe — SampleSelf is
-	// always called from a single goroutine in production.
+	// SelfHealthyDuration).
 	server := newMockRPCServer(t, map[string]interface{}{
 		"getHealth":   "ok",
 		"getIdentity": identityResult(testPassivePubkey),
@@ -345,9 +351,12 @@ func TestSampleSelf_ConcurrentAccess(t *testing.T) {
 // newTestStateWithGrace creates a State with an explicit UnhealthyGraceCount.
 func newTestStateWithGrace(rpcClient *rpc.Client, minDuration time.Duration, graceCount int) *State {
 	return NewState(Options{
-		RPC:          rpcClient,
-		ActivePubkey: testActivePubkey,
+		RPC:           rpcClient,
+		ClusterRPC:    rpcClient,
+		ActivePubkey:  testActivePubkey,
+		PassivePubkey: testPassivePubkey,
 		Cfg: config.SelfHealthy{
+			MaxSlotDistance:      32,
 			MinimumDuration:      minDuration,
 			PollIntervalDuration: time.Second,
 			UnhealthyGraceCount:  graceCount,

@@ -21,8 +21,10 @@ type State struct {
 	unhealthyLogged           bool
 	consecutiveUnhealthyCount int
 	rpc                       *rpc.Client
+	clusterRPC                *rpc.Client
 	cfg                       config.SelfHealthy
 	activePubkey              string
+	passivePubkey             string
 	logger                    *log.Logger
 	ctx                       context.Context
 	// forceHealthyForTest, when true, makes checkHealth() return (true, nil) without an RPC call.
@@ -32,21 +34,25 @@ type State struct {
 
 // Options are the options for creating a new local State.
 type Options struct {
-	RPC          *rpc.Client
-	Cfg          config.SelfHealthy
-	ActivePubkey string
-	Ctx          context.Context
-	LogPrefix    string
+	RPC           *rpc.Client
+	ClusterRPC    *rpc.Client
+	Cfg           config.SelfHealthy
+	ActivePubkey  string
+	PassivePubkey string
+	Ctx           context.Context
+	LogPrefix     string
 }
 
 // NewState creates a new local State.
 func NewState(opts Options) *State {
 	return &State{
-		rpc:          opts.RPC,
-		cfg:          opts.Cfg,
-		activePubkey: opts.ActivePubkey,
-		logger:       logging.New(opts.LogPrefix, "local_state"),
-		ctx:          opts.Ctx,
+		rpc:           opts.RPC,
+		clusterRPC:    opts.ClusterRPC,
+		cfg:           opts.Cfg,
+		activePubkey:  opts.ActivePubkey,
+		passivePubkey: opts.PassivePubkey,
+		logger:        logging.New(opts.LogPrefix, "local_state"),
+		ctx:           opts.Ctx,
 	}
 }
 
@@ -160,10 +166,11 @@ func (s *State) IsSelfPassive() bool {
 		s.logger.Debug("GetIdentity failed", "error", err)
 		return false
 	}
-	return identity.Identity.String() != s.activePubkey
+	return s.passivePubkey != "" && identity.Identity.String() == s.passivePubkey
 }
 
-// checkHealth performs a raw health check against the local RPC.
+// checkHealth requires local health and agreement with the independent
+// cluster head. It is a readiness check, not proof that a peer is fenced.
 func (s *State) checkHealth() (bool, error) {
 	if s.forceHealthyForTest {
 		return true, nil
@@ -172,5 +179,29 @@ func (s *State) checkHealth() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return healthStatus == solanagorpc.HealthOk, nil
+	if healthStatus != solanagorpc.HealthOk {
+		return false, nil
+	}
+	if s.clusterRPC == nil {
+		return false, fmt.Errorf("cluster RPC is required for slot health checks")
+	}
+	for _, commitment := range []solanagorpc.CommitmentType{solanagorpc.CommitmentProcessed, solanagorpc.CommitmentFinalized} {
+		clusterSlot, err := s.clusterRPC.GetSlotWithCommitment(s.ctx, commitment)
+		if err != nil {
+			return false, fmt.Errorf("cluster %s slot: %w", commitment, err)
+		}
+		localSlot, err := s.rpc.GetSlotWithCommitment(s.ctx, commitment)
+		if err != nil {
+			return false, fmt.Errorf("local %s slot: %w", commitment, err)
+		}
+		distance := clusterSlot - localSlot
+		if localSlot > clusterSlot {
+			distance = localSlot - clusterSlot
+		}
+		if distance > s.cfg.MaxSlotDistance {
+			return false, fmt.Errorf("%s slot distance %d exceeds %d (local=%d cluster=%d)",
+				commitment, distance, s.cfg.MaxSlotDistance, localSlot, clusterSlot)
+		}
+	}
+	return true, nil
 }

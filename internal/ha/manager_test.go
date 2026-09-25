@@ -2,6 +2,9 @@ package ha
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -20,6 +23,29 @@ func mockPublicIPFunc() (string, error) {
 // mockPublicIPFuncError is a mock function that returns an error
 func mockPublicIPFuncError() (string, error) {
 	return "", assert.AnError
+}
+
+func identityRPCServer(t *testing.T, pubkey string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID int `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0", "id": req.ID,
+			"result": map[string]string{"identity": pubkey},
+		}); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 func createTestConfig() *config.Config {
@@ -1161,6 +1187,8 @@ func TestEnsureHAState_BelowThreshold_NoDelinquency_NoFailover(t *testing.T) {
 // the check and proceeds all the way to ensureActive(), setting cache to "becoming_active".
 func TestEnsureHAState_DelinquencyBypass_Rank0_ProceedsToEnsureActive(t *testing.T) {
 	cfg := createTestConfig()
+	server := identityRPCServer(t, cfg.Validator.Identities.PassivePubkey())
+	cfg.Validator.RPCURL = server.URL
 	cfg.Failover.LeaderlessSamplesThreshold = 3
 	cfg.Failover.DelinquencyBypass = true
 	// rank-0 by IP: self (185.0.0.1) < peer (186.0.0.1)
@@ -1196,4 +1224,23 @@ func TestEnsureHAState_DelinquencyBypass_Rank0_ProceedsToEnsureActive(t *testing
 	state := manager.cache.GetState()
 	assert.Equal(t, "becoming_active", state.FailoverStatus,
 		"rank-0 delinquency bypass should proceed to ensureActive() regardless of leaderless count")
+}
+
+func TestEnsureHAState_UnexpectedIdentityCannotPromote(t *testing.T) {
+	cfg := createTestConfig()
+	server := identityRPCServer(t, "11111111111111111111111111111111")
+	cfg.Validator.RPCURL = server.URL
+	manager := NewManager(NewManagerOptions{Cfg: cfg, GetPublicIPFunc: mockPublicIPFunc})
+	require.NoError(t, manager.initialize())
+	manager.gossipState.SetRefreshNoOpForTest(true)
+	seedGossipPeers(manager, map[string]gossip.PeerState{
+		"test-validator": {IP: "192.168.1.100", Name: "test-validator", LastSeenActive: false},
+		"peer1":          {IP: "192.168.1.101", Name: "peer1", LastSeenActive: false},
+	})
+	manager.gossipState.LeaderlessSamplesCount = cfg.Failover.LeaderlessSamplesThreshold
+	manager.localState.SetForceHealthyForTest(true)
+	manager.localState.SetHealthySinceForTest(time.Now().Add(-time.Hour))
+	manager.ensureHAState()
+	require.Equal(t, "idle", manager.cache.GetState().FailoverStatus,
+		"a healthy node with an unrelated identity must never enter the active transition")
 }

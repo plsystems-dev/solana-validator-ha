@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -24,6 +25,7 @@ const defaultURLCooldown = 60 * time.Second
 
 // Client represents an RPC client that can handle multiple URLs
 type Client struct {
+	mu sync.Mutex
 	// urls is a slice of URLs for load balancing
 	urls []string
 	// clients is a map of RPC clients, keyed by the rpc URL
@@ -85,6 +87,8 @@ type rpcOperation[T any] struct {
 //  2. lastSuccessfulURL (if not in cooldown) — known-good, used as fallback
 //  3. Cooling-down URLs (403/429/503) — tried last, after all healthy options are exhausted
 func (c *Client) getURLsToTry() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if len(c.urls) <= 1 {
 		return c.urls
 	}
@@ -142,8 +146,10 @@ func executeWithRetry[T any](c *Client, ctx context.Context, op rpcOperation[T])
 		if err != nil {
 			if isPermanentHTTPError(err) {
 				now := time.Now()
+				c.mu.Lock()
 				alreadyCooling := c.urlCooldowns[url].After(now)
 				c.urlCooldowns[url] = now.Add(c.urlCooldown)
+				c.mu.Unlock()
 				if !alreadyCooling {
 					c.logger.Warn("RPC endpoint rate-limited or access forbidden, cooling down",
 						"method", op.name,
@@ -158,7 +164,9 @@ func executeWithRetry[T any](c *Client, ctx context.Context, op rpcOperation[T])
 		}
 
 		// Success! Update the last successful URL
+		c.mu.Lock()
 		c.lastSuccessfulURL = url
+		c.mu.Unlock()
 		return result, nil
 	}
 
@@ -193,10 +201,15 @@ func (c *Client) GetBalance(ctx context.Context, pubkey solana.PublicKey) (*rpc.
 
 // GetSlot gets the current slot from the first working RPC client
 func (c *Client) GetSlot(ctx context.Context) (uint64, error) {
+	return c.GetSlotWithCommitment(ctx, rpc.CommitmentProcessed)
+}
+
+// GetSlotWithCommitment obtains a slot with an explicit consistency level.
+func (c *Client) GetSlotWithCommitment(ctx context.Context, commitment rpc.CommitmentType) (uint64, error) {
 	return executeWithRetry(c, ctx, rpcOperation[uint64]{
 		name: "GetSlot",
 		execute: func(client *rpc.Client, ctx context.Context) (uint64, error) {
-			return client.GetSlot(ctx, rpc.CommitmentProcessed)
+			return client.GetSlot(ctx, commitment)
 		},
 	})
 }

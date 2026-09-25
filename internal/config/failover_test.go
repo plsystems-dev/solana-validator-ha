@@ -17,6 +17,7 @@ func TestFailover_SetDefaults(t *testing.T) {
 	// TakeoverJitterDuration is no longer set by default - it remains at zero value
 	assert.Equal(t, time.Duration(0), failover.TakeoverJitterDuration)
 	assert.Equal(t, 30*time.Second, failover.SelfHealthy.MinimumDuration)
+	assert.Equal(t, uint64(32), failover.SelfHealthy.MaxSlotDistance)
 	assert.Equal(t, 2*time.Second, failover.SelfHealthy.PollIntervalDuration)
 	// leaderless_confirmation_poll_duration defaults to poll_interval_duration (no behaviour change)
 	assert.Equal(t, failover.PollIntervalDuration, failover.LeaderlessConfirmationPollDuration)

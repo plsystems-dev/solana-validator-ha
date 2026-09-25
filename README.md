@@ -26,8 +26,11 @@ Each peer runs `solana-validator-ha` independently. It monitors the Solana gossi
 A node will only become active in a failover if:
 
 1. It appears in gossip (the validator process is running and reachable on the network);
-2. Its local RPC reports healthy; and
-3. It has been continuously healthy for at least `failover.self_healthy.minimum_duration` (guards against startup health flaps).
+2. Its local RPC reports healthy, and both its processed and finalized slots are within `failover.self_healthy.max_slot_distance` of independent cluster RPCs;
+3. It has been continuously healthy for at least `failover.self_healthy.minimum_duration` (guards against startup health flaps); and
+4. Its live identity exactly matches the configured passive identity.
+
+These checks establish candidacy only. Gossip absence, slot agreement and priority are not fencing. For mixed Firedancer/Agave deployments, the role command must positively fence the other signer, hold that fence throughout the transition, and enforce the client-specific tower safety delay. If it cannot fence the peer, it must refuse promotion. In particular, full Firedancer 26.09.4 cannot import a tower during a live identity switch and requires a 512-slot delay after the previous signer is fenced. An unreachable peer is not proof that its validator stopped.
 
 To make this work, two (‼️**VERY**‼️) important user-supplied commands are required:
 
@@ -261,6 +264,12 @@ failover:
   # Guards against startup health flaps: a validator that briefly reports healthy during
   # startup before falling behind and going unhealthy again.
   self_healthy:
+
+    # required: false | default: 32
+    # Maximum absolute difference from independent cluster RPCs, checked at both
+    # processed and finalized commitment. Local getHealth may say "ok" during
+    # a replay backlog. Cluster RPC failure makes the readiness check fail.
+    max_slot_distance: 32
 
     # required: false | default: 30s
     # How long the local validator RPC must continuously report healthy before this

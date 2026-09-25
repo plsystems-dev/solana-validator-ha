@@ -44,7 +44,7 @@ type Manager struct {
 	initialized     bool
 	logPrefix       string
 	// ring holds the last N gossip samples for pre-failover context in recordings.
-	ring            *recording.Ring
+	ring *recording.Ring
 	// recordingOutputDir is the resolved output directory for failover recordings (empty if disabled).
 	recordingOutputDir string
 }
@@ -158,8 +158,8 @@ func (m *Manager) initialize() error {
 	m.logger.Debug("creating gossip state")
 	m.gossipState = gossip.NewState(gossip.Options{
 		ClusterRPC: rpc.NewClient(m.logPrefix, m.cfg.Cluster.RPCURLs...).
-				WithTimeout(m.cfg.Cluster.RPCTimeoutDuration).
-				WithCooldown(m.cfg.Cluster.RPCURLCooldownDuration),
+			WithTimeout(m.cfg.Cluster.RPCTimeoutDuration).
+			WithCooldown(m.cfg.Cluster.RPCURLCooldownDuration),
 		ActivePubkey:                   m.cfg.Validator.Identities.ActivePubkey(),
 		ConfigPeers:                    m.cfg.Failover.Peers,
 		DelinquentSlotDistanceOverride: m.cfg.Failover.DelinquentSlotDistanceOverride,
@@ -170,11 +170,13 @@ func (m *Manager) initialize() error {
 	// create local state
 	m.logger.Debug("creating local state")
 	m.localState = local.NewState(local.Options{
-		RPC:          rpc.NewClient(m.logPrefix, m.cfg.Validator.RPCURL),
-		Cfg:          m.cfg.Failover.SelfHealthy,
-		ActivePubkey: m.cfg.Validator.Identities.ActivePubkey(),
-		Ctx:          m.ctx,
-		LogPrefix:    m.logPrefix,
+		RPC:           rpc.NewClient(m.logPrefix, m.cfg.Validator.RPCURL),
+		ClusterRPC:    rpc.NewClient(m.logPrefix, m.cfg.Cluster.RPCURLs...).WithTimeout(m.cfg.Cluster.RPCTimeoutDuration).WithCooldown(m.cfg.Cluster.RPCURLCooldownDuration),
+		Cfg:           m.cfg.Failover.SelfHealthy,
+		ActivePubkey:  m.cfg.Validator.Identities.ActivePubkey(),
+		PassivePubkey: m.cfg.Validator.Identities.PassivePubkey(),
+		Ctx:           m.ctx,
+		LogPrefix:     m.logPrefix,
 	})
 
 	// initialize gossip sample ring buffer (always, regardless of recording setting)
@@ -497,6 +499,10 @@ func (m *Manager) ensureHAState() {
 	// one last check to ensure we are NOT already active
 	if m.localState.IsSelfActive() {
 		m.logger.Warn("we are already active - nothing to do")
+		return
+	}
+	if !m.localState.IsSelfPassive() {
+		m.logger.Error("local identity is not the configured passive identity - refusing promotion")
 		return
 	}
 

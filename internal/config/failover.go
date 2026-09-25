@@ -9,6 +9,10 @@ import (
 
 // SelfHealthy represents configuration for tracking the local validator's health streak
 type SelfHealthy struct {
+	// MaxSlotDistance bounds the difference from independent cluster RPCs for
+	// both processed and finalized slots. Local getHealth alone is insufficient
+	// for clients that report healthy before completing catchup.
+	MaxSlotDistance uint64 `koanf:"max_slot_distance"`
 	// MinimumDuration is how long the local validator RPC must continuously report healthy
 	// before this node is eligible to become active in a failover
 	MinimumDuration time.Duration `koanf:"minimum_duration"`
@@ -23,22 +27,22 @@ type SelfHealthy struct {
 
 // Failover represents failover decision parameters
 type Failover struct {
-	DryRun                             bool                           `koanf:"dry_run"`
-	PollIntervalDuration               time.Duration                  `koanf:"poll_interval_duration"`
-	LeaderlessSamplesThreshold         int                            `koanf:"leaderless_samples_threshold"`
-	LeaderlessConfirmationPollDuration time.Duration                  `koanf:"leaderless_confirmation_poll_duration"`
+	DryRun                             bool          `koanf:"dry_run"`
+	PollIntervalDuration               time.Duration `koanf:"poll_interval_duration"`
+	LeaderlessSamplesThreshold         int           `koanf:"leaderless_samples_threshold"`
+	LeaderlessConfirmationPollDuration time.Duration `koanf:"leaderless_confirmation_poll_duration"`
 	// DelinquencyBypass, when true, skips the leaderless sample threshold if the active peer is
 	// declared delinquent by the network (and not due to low balance). Default false.
 	// ⚠️ See "Delinquency Fast-Path" in the README for the fork-recovery risk before enabling.
-	DelinquencyBypass                  bool                           `koanf:"delinquency_bypass"`
-	TakeoverJitterDuration             time.Duration                  `koanf:"takeover_jitter_duration"`
-	Priority                           *int                           `koanf:"priority"`
-	Active                             Role                           `koanf:"active"`
-	Passive                            Role                           `koanf:"passive"`
-	Peers                              Peers                          `koanf:"peers"`
-	DelinquentSlotDistanceOverride     DelinquentSlotDistanceOverride `koanf:"delinquent_slot_distance_override"`
-	SelfHealthy                        SelfHealthy                    `koanf:"self_healthy"`
-	Recording                          Recording                      `koanf:"recording"`
+	DelinquencyBypass              bool                           `koanf:"delinquency_bypass"`
+	TakeoverJitterDuration         time.Duration                  `koanf:"takeover_jitter_duration"`
+	Priority                       *int                           `koanf:"priority"`
+	Active                         Role                           `koanf:"active"`
+	Passive                        Role                           `koanf:"passive"`
+	Peers                          Peers                          `koanf:"peers"`
+	DelinquentSlotDistanceOverride DelinquentSlotDistanceOverride `koanf:"delinquent_slot_distance_override"`
+	SelfHealthy                    SelfHealthy                    `koanf:"self_healthy"`
+	Recording                      Recording                      `koanf:"recording"`
 }
 
 // leaderlessConfirmationPollFloor is the minimum allowed value for
@@ -244,6 +248,9 @@ func (f *Failover) SetDefaults() {
 	}
 	if f.SelfHealthy.MinimumDuration == 0 {
 		f.SelfHealthy.MinimumDuration = 30 * time.Second
+	}
+	if f.SelfHealthy.MaxSlotDistance == 0 {
+		f.SelfHealthy.MaxSlotDistance = 32
 	}
 	if f.SelfHealthy.PollIntervalDuration == 0 {
 		f.SelfHealthy.PollIntervalDuration = 2 * time.Second
