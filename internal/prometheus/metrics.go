@@ -3,6 +3,7 @@ package prometheus
 import (
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/charmbracelet/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -35,6 +36,7 @@ type Metrics struct {
 	config           *config.Config
 	logger           *log.Logger
 	cache            *cache.Cache
+	serverMu         sync.Mutex
 	server           *http.Server
 	registry         *prometheus.Registry
 	commonLabelNames []string
@@ -147,14 +149,17 @@ func (m *Metrics) StartServer(port int) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{}))
 
-	m.server = &http.Server{
+	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: mux,
 	}
+	m.serverMu.Lock()
+	m.server = server
+	m.serverMu.Unlock()
 
 	m.logger.Debug("starting Prometheus metrics server", "port", port)
 
-	err := m.server.ListenAndServe()
+	err := server.ListenAndServe()
 	if err != nil {
 		m.logger.Error("Prometheus metrics server failed", "error", err)
 	}
@@ -163,8 +168,11 @@ func (m *Metrics) StartServer(port int) error {
 
 // StopServer stops the Prometheus metrics HTTP server
 func (m *Metrics) StopServer() error {
-	if m.server != nil {
-		return m.server.Close()
+	m.serverMu.Lock()
+	server := m.server
+	m.serverMu.Unlock()
+	if server != nil {
+		return server.Close()
 	}
 	return nil
 }

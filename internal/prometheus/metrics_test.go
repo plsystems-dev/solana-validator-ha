@@ -530,7 +530,10 @@ func TestStartServer(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify server was created
-	assert.NotNil(t, metrics.server)
+	metrics.serverMu.Lock()
+	server := metrics.server
+	metrics.serverMu.Unlock()
+	assert.NotNil(t, server)
 
 	// Stop the server
 	err := metrics.StopServer()
@@ -689,11 +692,15 @@ func TestMetrics_WithHTTPClient(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Get the actual port from the server
-	port := metrics.server.Addr[1:] // Remove the colon
+	metrics.serverMu.Lock()
+	server := metrics.server
+	metrics.serverMu.Unlock()
+	require.NotNil(t, server)
+	port := server.Addr[1:] // Remove the colon
 	if port == "0" {
 		// Port 0 means the OS assigned a random port, we can't test HTTP in this case
 		// Just verify the server started
-		assert.NotNil(t, metrics.server)
+		assert.NotNil(t, server)
 	} else {
 		// Test HTTP endpoint
 		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/metrics", port))
